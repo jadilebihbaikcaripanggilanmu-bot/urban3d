@@ -15,8 +15,10 @@ try {
 const DEFAULT_SUPABASE_URL      = 'https://impssopasjpvnfxaywee.supabase.co';
 const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImltcHNzb3Bhc2pwdm5meGF5d2VlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0OTc1MTEsImV4cCI6MjA5ODA3MzUxMX0.94sjgTaTJuV2XPrf3Q8mikeWm7n93bQ-0Sw3JC8cHWQ';
 
-if (localStorage.getItem('custom_supabase_key') === 'sb_publishable_CefxNyDWHK3F4YzlPdwwIQ_vv4hw0Ek') {
+if (localStorage.getItem('custom_supabase_key') === 'sb_publishable_CefxNyDWHK3F4YzlPdwwIQ_vv4hw0Ek' || 
+    localStorage.getItem('custom_supabase_url') === 'https://odzgdawrtgbwdpesxrwd.supabase.co') {
     localStorage.removeItem('custom_supabase_key');
+    localStorage.removeItem('custom_supabase_url');
 }
 
 let supabaseUrl = localStorage.getItem('custom_supabase_url') || DEFAULT_SUPABASE_URL;
