@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Urban3D – Platform Analisis Urban & Lingkungan</title>
+    <link rel="icon" type="image/png" href="Urban Logo (2).png" />
+    <meta name="description" content="Aplikasi Analisis Urban 3D interaktif untuk pemodelan perkotaan, kapasitas ruang terbuka hijau, emisi bangunan, dan neraca karbon berbasis OpenStreetMap (OSM) dan MapLibre GL." />
+
+    <!-- MapLibre GL JS – jsDelivr -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.5.2/dist/maplibre-gl.css" />
+    <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.5.2/dist/maplibre-gl.js"></script>
+
+    <!-- Supabase JS -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+
+    <!-- External Style Sheet -->
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+    <!-- ===================== LOADING OVERLAY ===================== -->
+    <div id="loading-overlay">
+        <div class="loading-logo"><img src="Urban Logo (2).png" alt="Logo" style="width: 38px; height: 38px; object-fit: contain;" /></div>
+        <div class="loading-title">Urban3D</div>
+        <div class="loading-sub">Platform Analisis Perkotaan & Lingkungan</div>
+        <div class="loading-bar-bg"><div class="loading-bar"></div></div>
+        <div id="loading-status">Menginisialisasi Peta Indonesia...</div>
+    </div>
+
+    <!-- INLINE SAFETY SCRIPT -->
+    <script>
+    (function() {
+        var CLOSE_AFTER_MS = 4000;
+        var _closed = false;
+        function _closeOverlay() {
+            if (_closed) return;
+            _closed = true;
+            var el = document.getElementById('loading-overlay');
+            if (!el) return;
+            el.style.opacity = '0';
+            el.style.pointerEvents = 'none';
+        }
+        window._guaranteedCloseOverlay = _closeOverlay;
+        setTimeout(_closeOverlay, CLOSE_AFTER_MS);
+        var remaining = Math.round(CLOSE_AFTER_MS / 1000);
+        var cntEl = document.getElementById('loading-status');
+        var cntInterval = setInterval(function() {
+            remaining--;
+            if (remaining <= 0 || _closed) { clearInterval(cntInterval); return; }
+            if (cntEl) cntEl.textContent = 'Memuat Peta... (tutup otomatis dalam ' + remaining + 's)';
+        }, 1000);
+    })();
+    </script>
+
+    <!-- ===================== MAP ===================== -->
+    <div id="map"></div>
+
+    <!-- ===================== HOVER TOOLTIP ===================== -->
+    <div id="hover-tooltip">
+        <div class="ht-name" id="ht-name">—</div>
+        <div class="ht-row"><span>Lantai</span><span id="ht-levels">—</span></div>
+        <div class="ht-row"><span>Luas</span><span id="ht-area">— m²</span></div>
+        <div class="ht-row"><span>Emisi CO₂</span><span id="ht-energy">— kg/thn</span></div>
+    </div>
+
+    <!-- ===================== TOAST ===================== -->
+    <div id="toast"></div>
+
+    <!-- ===================== HEADER ===================== -->
+    <div id="header">
+        <div class="brand">
+            <div class="brand-icon"><img src="Urban Logo (2).png" alt="Logo" style="width: 26px; height: 26px; object-fit: contain;" /></div>
+            <div class="brand-text">
+                <h1>Urban3D</h1>
+                <span>Analisis Perkotaan & Lingkungan</span>
+            </div>
+        </div>
+        <div id="header-badges">
+            <div class="badge" id="project-badge"><i class="fa fa-map-location-dot" style="color:var(--green-400)"></i><span>Bebas Area (OSM)</span></div>
+            
+            <!-- PROFILE DROPDOWN WIDGET -->
+            <div class="profile-widget" id="profile-widget">
+                <button class="profile-btn" onclick="toggleProfileDropdown(event)">
+                    <div class="profile-avatar" id="profile-avatar-char">T</div>
+                    <span class="profile-username" id="profile-display-name">Mode Tamu</span>
+                    <i class="fa fa-chevron-down profile-arrow"></i>
+                </button>
+                <div class="profile-dropdown" id="profile-dropdown">
+                    <div class="dropdown-header">
+                        <div class="dropdown-user-info">
+                            <strong id="dropdown-user-name">Tamu</strong>
+                            <span id="dropdown-user-status">Mode Tamu (Lokal)</span>
+                        </div>
+                    </div>
+                    <div class="dropdown-divider"></div>
+                    <button class="dropdown-item" onclick="openProfileModal(event)"><i class="fa fa-user-gear"></i> Ubah Profil</button>
+                    <button class="dropdown-item" onclick="openPasswordModal(event)"><i class="fa fa-key"></i> Ubah Kata Sandi</button>
+                    <button class="dropdown-item" onclick="openLibraryModal(event)"><i class="fa fa-folder-open"></i> Library Project</button>
+                    <button class="dropdown-item" onclick="openArchiveModal(event)"><i class="fa fa-box-archive"></i> Archive Project</button>
+                    <div class="dropdown-divider"></div>
+                    <button class="dropdown-logout-btn" id="dropdown-auth-btn" onclick="handleDropdownAuth(event)">
+                        <i class="fa fa-right-to-bracket"></i> Masuk
+                    </button>
+                </div>
+            </div>
+            <!-- Hidden status span to prevent script crashes -->
+            <span id="conn-status" style="display:none;"></span>
+            <span id="auth-email" style="display:none;"></span>
+            <button id="auth-toggle-btn" style="display:none;"></button>
+        </div>
+    </div>
+
+    <!-- ===================== LEFT PANEL ===================== -->
+    <div id="left-panel">
+
+        <!-- Card 2: AOI Drawing Tool -->
+        <div class="glass-card">
+            <div class="panel-title"><i class="fa fa-draw-polygon"></i> Area of Interest (AOI)</div>
+            
+            <!-- Drawing Mode Selector -->
+            <div class="draw-mode-selector">
+                <button id="mode-rect-btn" class="mode-btn active" onclick="setDrawMode('rectangle')" title="Mode Kotak (Rectangle)">
+                    <i class="fa fa-vector-square"></i> Kotak
+                </button>
+                <button id="mode-circle-btn" class="mode-btn" onclick="setDrawMode('circle')" title="Mode Lingkaran (Circle)">
+                    <i class="fa fa-circle"></i> Lingkaran
+                </button>
+                <button id="mode-poly-btn" class="mode-btn" onclick="setDrawMode('polygon')" title="Mode Poligon (Polygon)">
+                    <i class="fa fa-draw-polygon"></i> Poligon
+                </button>
+            </div>
+
+            <div style="display:flex;gap:6px;">
+                <button id="draw-aoi-btn" onclick="toggleAoiDrawing()" style="flex:1;">
+                    <i class="fa fa-pencil-ruler"></i> Mulai Menggambar
+                </button>
+                <button id="btn-finish-poly" onclick="finishPolygonDrawing()" style="display:none;flex:1;background:linear-gradient(135deg,var(--blue-600),var(--blue-500));border:none;border-radius:var(--radius-sm);color:white;font-family:var(--font);font-size:12px;font-weight:600;cursor:pointer;transition:var(--transition);" title="Selesaikan Poligon">
+                    <i class="fa fa-flag-checkered"></i> Selesai
+                </button>
+            </div>
+
+            <div class="aoi-info">
+                <div class="aoi-info-row"><span>Luas Area:</span><span id="aoi-area-val">—</span></div>
+                <div class="aoi-info-row"><span>Batas Maks:</span><span>100,0 km²</span></div>
+                <div class="aoi-info-row"><span>Est. Waktu:</span><span id="aoi-est-time">—</span></div>
+                <div class="aoi-info-row"><span>Est. Output:</span><span id="aoi-est-size">—</span></div>
+            </div>
+            <div class="warning-banner" id="aoi-warn-banner">
+                ⚠️ Luas area melebihi 5.0 km²! Pengambilan data OSM untuk area besar adalah **operasi sangat berat** dan bisa timeout/lag.
+            </div>
+            <div class="analysis-summary-grid" style="display:none;">
+                <div class="summary-card"><div class="summary-label">Luas AOI</div><div class="summary-value" id="summary-aoi-area">—</div></div>
+                <div class="summary-card"><div class="summary-label">Estimasi Bangunan</div><div class="summary-value" id="summary-building-count">—</div></div>
+                <div class="summary-card"><div class="summary-label">Estimasi Ukuran Data</div><div class="summary-value" id="summary-data-size">—</div></div>
+                <div class="summary-card"><div class="summary-label">Estimasi Waktu</div><div class="summary-value" id="summary-est-time">—</div></div>
+            </div>
+
+            <div class="analysis-task-list" id="analysis-queue-card">
+                <div class="analysis-task-card"><div class="task-summary"><div class="task-icon"><i class="fa fa-check"></i></div><div><div class="task-title">AOI divalidasi</div><div class="task-sub" id="task-aoi-validated">Menunggu</div></div></div><div class="task-status status-pending" id="task-aoi-validated-status">Pending</div></div>
+                <div class="analysis-task-card"><div class="task-summary"><div class="task-icon"><i class="fa fa-check"></i></div><div><div class="task-title">Luas AOI terhitung</div><div class="task-sub" id="task-aoi-area">Menunggu</div></div></div><div class="task-status status-pending" id="task-aoi-area-status">Pending</div></div>
+                <div class="analysis-task-card"><div class="task-summary"><div class="task-icon"><i class="fa fa-check"></i></div><div><div class="task-title">Mengunduh data OSM</div><div class="task-sub" id="task-osm-download">Menunggu</div></div></div><div class="task-status status-pending" id="task-osm-download-status">Pending</div></div>
+                <div class="analysis-task-card"><div class="task-summary"><div class="task-icon"><i class="fa fa-leaf"></i></div><div><div class="task-title">Analisis urban & emisi</div><div class="task-sub" id="task-solar-analysis">Menunggu</div></div></div><div class="task-status status-pending" id="task-solar-analysis-status">Pending</div></div>
+                <div class="analysis-task-card"><div class="task-summary"><div class="task-icon"><i class="fa fa-cube"></i></div><div><div class="task-title">Rendering 3D</div><div class="task-sub" id="task-3d-rendering">Menunggu</div></div></div><div class="task-status status-pending" id="task-3d-rendering-status">Pending</div></div>
+            </div>
+
+            <div class="aoi-actions">
+                <button class="aoi-btn-run" id="btn-run-analysis" onclick="runAnalysis()" disabled>
+                    <i class="fa fa-play"></i> Analisis
+                </button>
+                <button class="aoi-btn-clear" id="btn-clear-aoi" onclick="clearAoi()" style="display:none;">
+                    Hapus
+                </button>
+                <button class="aoi-btn-cancel" id="btn-cancel-analysis" onclick="cancelAnalysis()" style="display:none;">
+                    <i class="fa fa-ban"></i> Batalkan Analisis
+                </button>
+            </div>
+
+            <!-- Loading Indicator during analysis -->
+            <div id="aoi-loader-wrap" style="display:none;margin-top:12px;border-top:1px dashed var(--border-subtle);padding-top:10px;">
+                <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--slate-400);margin-bottom:6px">
+                    <span id="aoi-loader-status"><i class="fa fa-circle-notch fa-spin"></i> Menghubungkan...</span>
+                    <span id="aoi-loader-pct" style="color:var(--cyan-400);font-weight:600">0%</span>
+                </div>
+                <div style="background:rgba(255,255,255,0.08);border-radius:99px;height:5px;overflow:hidden">
+                    <div id="aoi-loader-bar" style="height:100%;background:linear-gradient(90deg,var(--blue-500),var(--cyan-400));border-radius:99px;width:0%;transition:width 0.3s ease"></div>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--slate-500);margin-top:5px">
+                    <span>Sisa Waktu: <b id="aoi-loader-time" style="color:var(--white)">—</b></span>
+                    <span>Ukuran: <b id="aoi-loader-size" style="color:var(--white)">—</b></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Card 3: Parameters -->
+        <div class="glass-card">
+            <div class="panel-title"><i class="fa fa-sliders"></i> Parameter Analisis</div>
+            
+            <!-- Group 1: Bangunan & Emisi -->
+            <div style="font-size:10px;font-weight:700;color:var(--blue-400);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.05);padding-bottom:2px;">Gedung & Emisi</div>
+            
+            <div class="slider-row">
+                <div class="slider-label">Min. Lantai Gedung</div>
+                <div class="slider-val" id="val-min-levels">3</div>
+            </div>
+            <input type="range" id="sl-min-levels" min="1" max="20" value="3" oninput="updateParametersUI()" />
+
+            <div class="slider-row">
+                <div class="slider-label">Faktor Emisi Gedung (%)</div>
+                <div class="slider-val" id="val-building-emissions">100%</div>
+            </div>
+            <input type="range" id="sl-building-emissions" min="50" max="150" step="5" value="100" oninput="updateParametersUI()" />
+
+            <!-- Group 2: Vegetasi & RTH -->
+            <div style="font-size:10px;font-weight:700;color:var(--green-400);text-transform:uppercase;letter-spacing:1px;margin-top:12px;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.05);padding-bottom:2px;">Vegetasi & RTH</div>
+            
+            <div class="slider-row">
+                <div class="slider-label">Serapan Hutan (kg/m²/thn)</div>
+                <div class="slider-val" id="val-greenery-absorption">2.4</div>
+            </div>
+            <input type="range" id="sl-greenery-absorption" min="0.5" max="5.0" step="0.1" value="2.4" oninput="updateParametersUI()" />
+        </div>
+
+        
+        <!-- Card 4: Statistics Dashboard -->
+        <div class="glass-card" id="stats-dashboard" style="display:none;">
+            <div class="panel-title"><i class="fa fa-chart-line"></i> Dashboard Hasil</div>
+            
+            <!-- Coloring Mode Selector -->
+            <div style="margin-bottom:12px; border-bottom:1px dashed rgba(255,255,255,0.1); padding-bottom:10px;">
+                <label style="font-size:10px; font-weight:700; color:var(--cyan-400); text-transform:uppercase; letter-spacing:1px; display:block; margin-bottom:4px;"><i class="fa fa-palette"></i> Mode Visualisasi Peta</label>
+                <select id="map-color-mode" onchange="changeColorMode()" style="width:100%; background:rgba(15, 23, 42, 0.8); border:1px solid var(--border-subtle); color:var(--white); padding:6px 10px; border-radius:var(--radius-sm); font-family:var(--font); font-size:11px; outline:none; cursor:pointer;">
+                    <option value="carbon">Jejak Karbon (Carbon Footprint)</option>
+                    <option value="density">Kepadatan Bangunan (Building Density)</option>
+                    <option value="height">Tinggi Bangunan (Building Height)</option>
+                </select>
+            </div>
+
+            <div class="stats-grid" style="grid-template-columns: repeat(2, 1fr); gap: 6px;">
+                <div class="stat-item" style="padding:6px 4px;"><div class="stat-value stat-blue" id="stat-buildings" style="font-size:14px;">—</div><div class="stat-label" style="font-size:9px;">Total Gedung</div></div>
+                <div class="stat-item" style="padding:6px 4px;"><div class="stat-value stat-green" id="stat-green-area" style="font-size:14px;color:var(--green-400);">—</div><div class="stat-label" style="font-size:9px;">Luas RTH (m²)</div></div>
+                <div class="stat-item" style="padding:6px 4px;"><div class="stat-value" id="stat-co2-emissions" style="color:var(--red-400);font-size:14px;">—</div><div class="stat-label" style="font-size:9px;">Emisi Gedung (t)</div></div>
+                <div class="stat-item" style="padding:6px 4px;"><div class="stat-value" id="stat-co2-absorption" style="color:var(--green-400);font-size:14px;">—</div><div class="stat-label" style="font-size:9px;">Serapan RTH (t)</div></div>
+                <div class="stat-item" style="grid-column: span 2; padding: 10px 4px; border: 1px dashed var(--border-subtle); background: rgba(255,255,255,0.02);"><div class="stat-value" id="stat-carbon-balance" style="font-size:16px;font-weight:800;">—</div><div class="stat-label" id="stat-carbon-status" style="font-size:9px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">Neraca Karbon</div></div>
+            </div>
+
+            <!-- Top 5 list -->
+            <div style="font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--slate-400);margin-top:12px;margin-bottom:6px;" id="top-list-title">Top 5 Emisi Terbesar</div>
+            <div class="top-list" id="top-buildings-container">
+                <!-- Dynamically generated -->
+            </div>
+
+            <div class="export-row" style="grid-template-columns: repeat(2, 1fr);">
+                <button class="export-btn" onclick="exportGeoJSON()"><i class="fa fa-file-code"></i> GeoJSON</button>
+                <button class="export-btn" onclick="exportCSV()"><i class="fa fa-file-csv"></i> CSV</button>
+                <button class="export-btn" onclick="exportLaporan()"><i class="fa fa-file-alt"></i> Laporan</button>
+                <button class="export-btn" onclick="openPrintLayout()"><i class="fa fa-print"></i> Cetak Peta</button>
+            </div>
+        </div>
+
+        <!-- Card 4.5: Time Machine — Urban Growth Animator (hidden until analysis done) -->
+        <div class="glass-card" id="time-machine-card" style="display:none;">
+            <div class="panel-title"><i class="fa fa-clock-rotate-left"></i> Time Machine Kota</div>
+            <div id="tm-date-coverage" style="font-size:9px;color:var(--slate-400);margin-bottom:10px;min-height:14px;"></div>
+
+            <button id="tm-toggle-btn" class="btn-tm-toggle" onclick="toggleTimeMachine()">
+                <i class="fa fa-clock-rotate-left"></i> Aktifkan Time Machine
+            </button>
+
+            <!-- Controls — revealed after activation -->
+            <div id="time-machine-controls" style="display:none;margin-top:14px;">
+                <div class="slider-row">
+                    <div class="slider-label">&#128197; Tahun</div>
+                    <div class="tm-year-display" id="tm-year-label">2024</div>
+                </div>
+                <input type="range" id="tm-year-slider" min="1950" max="2024" step="1" value="2024" oninput="onTimeMachineSlider()" />
+
+                <div class="tm-controls">
+                    <button id="tm-reset-btn" onclick="resetTimeMachine()" title="Kembali ke awal"><i class="fa fa-backward-step"></i></button>
+                    <button id="tm-play-btn" onclick="playTimeMachine()"><i class="fa fa-play"></i> Play</button>
+                </div>
+
+                <div class="tm-counter" id="tm-counter">—</div>
+
+                <!-- Era color breakdown -->
+                <div class="tm-era-legend">
+                    <div class="tm-era-row">
+                        <span class="tm-era-dot" style="background:#374151"></span>
+                        <span class="tm-era-name">Tdk Diketahui</span>
+                        <div class="tm-era-bar-wrap"><div class="tm-era-bar" id="era-bar-unknown" style="background:#4b5563"></div></div>
+                        <span class="tm-era-count" id="era-bar-unknown-label">0</span>
+                    </div>
+                    <div class="tm-era-row">
+                        <span class="tm-era-dot" style="background:#f59e0b"></span>
+                        <span class="tm-era-name">&lt; 1970</span>
+                        <div class="tm-era-bar-wrap"><div class="tm-era-bar" id="era-bar-pre1970" style="background:#f59e0b"></div></div>
+                        <span class="tm-era-count" id="era-bar-pre1970-label">0</span>
+                    </div>
+                    <div class="tm-era-row">
+                        <span class="tm-era-dot" style="background:#06b6d4"></span>
+                        <span class="tm-era-name">1970–1990</span>
+                        <div class="tm-era-bar-wrap"><div class="tm-era-bar" id="era-bar-1990" style="background:#06b6d4"></div></div>
+                        <span class="tm-era-count" id="era-bar-1990-label">0</span>
+                    </div>
+                    <div class="tm-era-row">
+                        <span class="tm-era-dot" style="background:#10b981"></span>
+                        <span class="tm-era-name">1990–2010</span>
+                        <div class="tm-era-bar-wrap"><div class="tm-era-bar" id="era-bar-2010" style="background:#10b981"></div></div>
+                        <span class="tm-era-count" id="era-bar-2010-label">0</span>
+                    </div>
+                    <div class="tm-era-row">
+                        <span class="tm-era-dot" style="background:#3b82f6"></span>
+                        <span class="tm-era-name">2010–2020</span>
+                        <div class="tm-era-bar-wrap"><div class="tm-era-bar" id="era-bar-2020" style="background:#3b82f6"></div></div>
+                        <span class="tm-era-count" id="era-bar-2020-label">0</span>
+                    </div>
+                    <div class="tm-era-row">
+                        <span class="tm-era-dot" style="background:#8b5cf6"></span>
+                        <span class="tm-era-name">&gt; 2020</span>
+                        <div class="tm-era-bar-wrap"><div class="tm-era-bar" id="era-bar-post2020" style="background:#8b5cf6"></div></div>
+                        <span class="tm-era-count" id="era-bar-post2020-label">0</span>
+                    </div>
+                </div>
+
+                <div style="font-size:9px;color:var(--slate-500);margin-top:8px;border-top:1px dashed var(--border-subtle);padding-top:6px;line-height:1.5;">
+                    &#128218; Warna = era pembangunan dari tag <code style="color:var(--cyan-400)">start_date</code> OSM. Bangunan tanpa tanggal tampil abu-abu sepanjang waktu.
+                </div>
+            </div>
+        </div>
+
+        <!-- Card 5: Legend -->
+        <div class="glass-card" id="legend-card">
+            <div class="panel-title" id="legend-title"><i class="fa fa-palette"></i> Skala Jejak Karbon</div>
+            <div class="legend-bar" id="legend-gradient" style="background: linear-gradient(90deg, var(--green-500), var(--amber-500), var(--red-500));"></div>
+            <div class="legend-labels" id="legend-labels">
+                <span id="leg-min">Rendah</span><span id="leg-mid">Sedang</span><span id="leg-max">Tinggi</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--slate-500);margin-top:4px" id="legend-details">
+                <span id="leg-detail-min">&lt; 10 ton</span><span id="leg-detail-mid">50 ton</span><span id="leg-detail-max">100+ ton CO₂</span>
+            </div>
+            <div style="font-size:9px;color:var(--slate-500);margin-top:8px;border-top:1px dashed var(--border-subtle);padding-top:6px;line-height:1.5;" id="legend-info">
+                🌳 <strong style="color:var(--green-400)">Vegetasi hijau 3D</strong> ditampilkan di peta (hutan, taman, rumput, pohon) sebagai penyerap karbon alami perkotaan.
+            </div>
+        </div>
+
+        <!-- Card 6: Supabase Setup (SQL Helper) -->
+        <div class="glass-card" id="sql-card">
+            <div class="accordion-header" onclick="toggleAccordion('sql-body', 'sql-chevron')">
+                <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:var(--amber-400);">
+                    <i class="fa fa-database"></i> Setup Supabase DDL
+                </div>
+                <i class="fa fa-chevron-right" id="sql-chevron" style="font-size:10px;color:var(--slate-400);"></i>
+            </div>
+            <div class="accordion-content" id="sql-body">
+                <pre id="sql-code">-- Jalankan di SQL Editor Supabase Anda
+-- untuk menyimpan library project:
+
+CREATE TABLE IF NOT EXISTS projects (
+  id            BIGSERIAL PRIMARY KEY,
+  user_id       UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  aoi_geojson   JSONB,
+  geojson_data  JSONB,
+  project_stats JSONB,
+  created_at    TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Aktifkan Row Level Security (RLS)
+ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
+
+-- Buat policies akses data user masing-masing
+CREATE POLICY "Allow read own projects" ON projects
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Allow insert own projects" ON projects
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Allow delete own projects" ON projects
+  FOR DELETE USING (auth.uid() = user_id);
+
+CREATE POLICY "Allow update own projects" ON projects
+  FOR UPDATE USING (auth.uid() = user_id);</pre>
+                <button id="copy-sql-btn" onclick="copySQL()" style="margin-bottom: 12px;"><i class="fa fa-copy"></i> Salin SQL DDL</button>
+
+                <!-- Custom Supabase Configuration Settings -->
+                <div style="border-top:1px dashed var(--border-subtle); margin-top:14px; padding-top:12px;">
+                    <div style="font-size:10px; font-weight:700; color:var(--cyan-400); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;">
+                        <i class="fa fa-plug"></i> Koneksi Supabase Kustom
+                    </div>
+                    <p style="font-size:9.5px; color:var(--slate-400); line-height:1.4; margin-bottom:8px;">
+                        Hubungkan WebGIS ini ke Supabase milik Anda sendiri. Perubahan memerlukan muat ulang halaman.
+                    </p>
+                    <div class="auth-input-group" style="margin-bottom:8px;">
+                        <label style="font-size:9px; color:var(--slate-500);">Supabase URL</label>
+                        <input type="text" class="auth-input" id="cfg-supabase-url" placeholder="https://xxx.supabase.co" style="padding:6px 8px; font-size:11px;" />
+                    </div>
+                    <div class="auth-input-group" style="margin-bottom:12px;">
+                        <label style="font-size:9px; color:var(--slate-500);">API Anon Key</label>
+                        <input type="password" class="auth-input" id="cfg-supabase-key" placeholder="eyJhbGci..." style="padding:6px 8px; font-size:11px;" />
+                    </div>
+                    <div style="display:flex; gap:6px;">
+                        <button onclick="saveCustomSupabaseConfig()" style="flex:1; background:linear-gradient(135deg,var(--blue-600),var(--blue-500)); border:none; border-radius:var(--radius-sm); color:white; padding:6px; font-size:11px; font-weight:600; cursor:pointer;">
+                            Hubungkan
+                        </button>
+                        <button onclick="resetSupabaseConfig()" style="background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); border-radius:var(--radius-sm); color:#f87171; padding:6px 10px; font-size:11px; font-weight:600; cursor:pointer;">
+                            Reset
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ===================== RIGHT PANEL (Building/Greenery Detail) ===================== -->
+    <div id="right-panel">
+        <div class="glass-card">
+            <div id="detail-header">
+                <div>
+                    <div id="detail-building-name">Nama Objek</div>
+                    <div id="detail-building-type">Tipe Objek</div>
+                </div>
+                <button id="close-detail" onclick="closeDetail()"><i class="fa fa-xmark"></i></button>
+            </div>
+
+            <!-- Info Rows -->
+            <div class="detail-metric" id="metric-row-1">
+                <div class="dm-label" id="lbl-metric-1"><i class="fa fa-layer-group"></i> Jumlah Lantai</div>
+                <div class="dm-value stat-blue" id="d-levels">—</div>
+            </div>
+            <div class="detail-metric" id="metric-row-2">
+                <div class="dm-label" id="lbl-metric-2"><i class="fa fa-ruler-vertical"></i> Est. Tinggi Gedung</div>
+                <div class="dm-value stat-violet" id="d-height">— m</div>
+            </div>
+            <div class="detail-metric" id="metric-row-3">
+                <div class="dm-label" id="lbl-metric-3"><i class="fa fa-vector-square"></i> Luas Tapak (Footprint)</div>
+                <div class="dm-value stat-green" id="d-area">— m²</div>
+            </div>
+            <div class="detail-metric" id="metric-row-4">
+                <div class="dm-label" id="lbl-metric-4"><i class="fa fa-leaf"></i> Emisi CO₂ Gedung</div>
+                <div class="dm-value stat-red" id="d-energy">— kg/thn</div>
+            </div>
+            <div class="detail-metric" id="metric-row-5">
+                <div class="dm-label" id="lbl-metric-5"><i class="fa fa-circle-nodes"></i> Kepadatan Area</div>
+                <div class="dm-value stat-cyan" id="d-co2">—</div>
+            </div>
+            <div class="detail-metric" id="metric-row-6" style="display:none;">
+                <div class="dm-label" id="lbl-metric-6"><i class="fa fa-circle-question"></i> Metrik 6</div>
+                <div class="dm-value" id="d-roof-shape">—</div>
+            </div>
+            <div class="detail-metric" id="metric-row-7" style="display:none;">
+                <div class="dm-label" id="lbl-metric-7"><i class="fa fa-circle-question"></i> Metrik 7</div>
+                <div class="dm-value stat-cyan" id="d-roof-modifier">—</div>
+            </div>
+        </div>
+
+        <!-- Simulator Card (Dynamic: Energy Efficiency for Building, Density for Greenery) -->
+        <div class="glass-card">
+            <div class="panel-title" id="sim-title"><i class="fa fa-cogs"></i> Simulator Dampak Perkotaan</div>
+            <div class="slider-row">
+                <div class="slider-label" id="lbl-sim-slider-1">Cakupan Simulasi</div>
+                <div class="slider-val" id="val-coverage">0%</div>
+            </div>
+            <input type="range" id="sl-coverage" min="0" max="100" value="0" oninput="updateSim()" />
+
+            <div class="slider-row" id="sim-slider-2-row" style="display:none;">
+                <div class="slider-label" id="lbl-sim-slider-2">Slider 2</div>
+                <div class="slider-val" id="val-efficiency">—</div>
+            </div>
+            <input type="range" id="sl-efficiency" min="0" max="100" value="0" style="display:none;" oninput="updateSim()" />
+
+            <div class="output-grid">
+                <div class="output-item"><div class="ov stat-amber" id="out-energy">—</div><div class="ol" id="lbl-out-1">Metrik 1</div></div>
+                <div class="output-item"><div class="ov stat-green" id="out-saving">—</div><div class="ol" id="lbl-out-2">Metrik 2</div></div>
+                <div class="output-item"><div class="ov stat-cyan" id="out-co2">—</div><div class="ol" id="lbl-out-3">Metrik 3</div></div>
+                <div class="output-item"><div class="ov stat-violet" id="out-roi">—</div><div class="ol" id="lbl-out-4">Metrik 4</div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================== BOTTOM STATUS BAR ===================== -->
+    <div id="status-bar">
+        <i class="fa fa-circle-info"></i>
+        <span id="status-text">Gunakan tombol 'Gambar AOI Baru' lalu klik pada peta untuk memulai area.</span>
+    </div>
+
+    <!-- ===================== VIEW CONTROLS ===================== -->
+    <div id="view-controls">
+        <button class="ctrl-btn" title="Ganti Base Map Satelit/Peta" onclick="toggleSatelliteLayer()"><i class="fa fa-satellite"></i></button>
+        <button class="ctrl-btn" title="Reset Pandangan" onclick="resetView()"><i class="fa fa-compass"></i></button>
+        <button class="ctrl-btn" title="Tampilan Atas (2D)" onclick="topView()"><i class="fa fa-arrow-down"></i></button>
+        <button class="ctrl-btn" title="Tampilan 3D" onclick="set3DView()"><i class="fa fa-cube"></i></button>
+    </div>
+
+    <!-- ===================== ANALYSIS OVERLAY ===================== -->
+    <div id="analysis-overlay">
+        <div class="analysis-panel" role="dialog" aria-modal="true" aria-labelledby="analysis-title">
+            <button class="analysis-close" onclick="hideAnalysisOverlay()" title="Tutup panel analisis"><i class="fa fa-xmark"></i></button>
+            <h2 id="analysis-title">Workflow Analisis AOI</h2>
+            <p>Analisis akan berjalan melalui tahap validasi, pengambilan data OpenStreetMap, pemrosesan bangunan, dan pembuatan visualisasi 3D. Anda dapat membatalkan proses kapan saja.</p>
+            <div class="analysis-progress-bar"><div class="analysis-progress-inner" id="analysis-progress-inner"></div></div>
+            <div class="analysis-card-summary">
+                <div class="analysis-meta-card"><span>AOI</span><strong id="analysis-meta-aoi">—</strong></div>
+                <div class="analysis-meta-card"><span>Bangunan</span><strong id="analysis-meta-buildings">—</strong></div>
+                <div class="analysis-meta-card"><span>Data</span><strong id="analysis-meta-size">—</strong></div>
+                <div class="analysis-meta-card"><span>Estimasi Waktu</span><strong id="analysis-meta-time">—</strong></div>
+            </div>
+            <div class="analysis-stage-group">
+                <h3>Tahapan Proses</h3>
+                <div class="analysis-stage-list" id="analysis-stage-list">
+                    <div class="stage-card" data-stage="validate"><div class="stage-summary"><div class="stage-icon"><i class="fa fa-check"></i></div><div><div class="stage-title">Validating AOI</div><div class="stage-sub" id="stage-validate-sub">Menunggu</div></div></div><div class="stage-status status-pending" id="stage-validate-status">Pending</div></div>
+                    <div class="stage-card" data-stage="connect"><div class="stage-summary"><div class="stage-icon"><i class="fa fa-wifi"></i></div><div><div class="stage-title">Connecting to OSM / Overpass API</div><div class="stage-sub" id="stage-connect-sub">Menunggu</div></div></div><div class="stage-status status-pending" id="stage-connect-status">Pending</div></div>
+                    <div class="stage-card" data-stage="download"><div class="stage-summary"><div class="stage-icon"><i class="fa fa-cloud-download-alt"></i></div><div><div class="stage-title">Downloading building footprints</div><div class="stage-sub" id="stage-download-sub">Menunggu</div></div></div><div class="stage-status status-pending" id="stage-download-status">Pending</div></div>
+                    <div class="stage-card" data-stage="process"><div class="stage-summary"><div class="stage-icon"><i class="fa fa-cogs"></i></div><div><div class="stage-title">Processing geometries</div><div class="stage-sub" id="stage-process-sub">Menunggu</div></div></div><div class="stage-status status-pending" id="stage-process-status">Pending</div></div>
+                    <div class="stage-card" data-stage="solar"><div class="stage-summary"><div class="stage-icon"><i class="fa fa-leaf"></i></div><div><div class="stage-title">Menganalisis jejak karbon</div><div class="stage-sub" id="stage-solar-sub">Menunggu</div></div></div><div class="stage-status status-pending" id="stage-solar-status">Pending</div></div>
+                    <div class="stage-card" data-stage="visualize"><div class="stage-summary"><div class="stage-icon"><i class="fa fa-cube"></i></div><div><div class="stage-title">Generating 3D visualization</div><div class="stage-sub" id="stage-visualize-sub">Menunggu</div></div></div><div class="stage-status status-pending" id="stage-visualize-status">Pending</div></div>
+                    <div class="stage-card" data-stage="finalize"><div class="stage-summary"><div class="stage-icon"><i class="fa fa-flag-checkered"></i></div><div><div class="stage-title">Finalizing results</div><div class="stage-sub" id="stage-finalize-sub">Menunggu</div></div></div><div class="stage-status status-pending" id="stage-finalize-status">Pending</div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================== WELCOME / GATEWAY MODAL ===================== -->
+    <div id="welcome-modal">
+        <div class="welcome-card">
+            <div class="welcome-header">
+                <div class="welcome-logo"><img src="Urban Logo (2).png" alt="Urban Logo" /></div>
+                <div class="welcome-title">Selamat Datang di Urban3D</div>
+            </div>
+
+            <div class="welcome-options">
+                <button class="welcome-opt-btn primary" onclick="handleWelcomeOption('login')">
+                    <i class="fa fa-right-to-bracket"></i> Masuk ke Akun
+                </button>
+                <button class="welcome-opt-btn secondary" onclick="handleWelcomeOption('register')">
+                    <i class="fa fa-user-plus"></i> Daftar Akun Baru
+                </button>
+                <div class="welcome-divider"><span>atau</span></div>
+                <button class="welcome-opt-btn guest" onclick="handleWelcomeOption('guest')">
+                    <i class="fa fa-user-circle"></i> Lanjutkan sebagai Tamu
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================== AUTH MODAL ===================== -->
+    <div id="auth-modal">
+        <div class="auth-card">
+            <div class="auth-card-title">
+                <span id="auth-modal-title">Masuk ke Supabase</span>
+                <button class="auth-card-close" onclick="closeAuthModal()"><i class="fa fa-xmark"></i></button>
+            </div>
+            <div class="auth-input-group">
+                <label>Username</label>
+                <div class="auth-input-wrapper">
+                    <i class="fa fa-user input-icon"></i>
+                    <input type="text" class="auth-input" id="auth-email-input" placeholder="Username Anda..." />
+                </div>
+            </div>
+            <div class="auth-input-group">
+                <label>Kata Sandi</label>
+                <div class="auth-input-wrapper">
+                    <i class="fa fa-lock input-icon"></i>
+                    <input type="password" class="auth-input" id="auth-password-input" placeholder="Kata sandi..." />
+                    <button type="button" class="toggle-password" onclick="togglePasswordVisibility()"><i class="fa fa-eye" id="password-toggle-icon"></i></button>
+                </div>
+            </div>
+            <button class="auth-action-btn" id="auth-action-submit" onclick="submitAuth()">Masuk</button>
+            <div class="auth-switch-text" id="auth-switch" onclick="switchAuthMode()">
+                Belum punya akun? <span>Daftar Sekarang</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================== PRINT LAYOUT OVERLAY ===================== -->
+    <div id="print-layout-overlay">
+        <!-- Configuration Panel (Left) -->
+        <div class="print-sidebar">
+            <div class="panel-title"><i class="fa fa-print"></i> Layout & Cetak Peta</div>
+            
+            <div class="auth-input-group" style="margin-bottom:12px;">
+                <label>Judul Peta</label>
+                <input type="text" class="auth-input" id="print-title-input" value="PETA ANALISIS URBAN 3D" oninput="syncPrintText()" />
+            </div>
+
+            <div class="auth-input-group" style="margin-bottom:12px;">
+                <label>Nama Kartografer</label>
+                <input type="text" class="auth-input" id="print-author-input" value="Kartografer Utama" oninput="syncPrintText()" />
+            </div>
+
+            <div class="auth-input-group" style="margin-bottom:12px;">
+                <label>Ukuran Kertas</label>
+                <select id="print-paper-select" onchange="changePaperSize()" style="width:100%; background:rgba(15, 23, 42, 0.8); border:1px solid var(--border-subtle); color:var(--white); padding:8px 10px; border-radius:var(--radius-sm); font-family:var(--font); font-size:12px; outline:none; cursor:pointer;">
+                    <option value="a4-landscape">A4 Landscape (Mendatar)</option>
+                    <option value="a4-portrait">A4 Portrait (Tegak)</option>
+                    <option value="a3-landscape">A3 Landscape (Mendatar)</option>
+                    <option value="a3-portrait">A3 Portrait (Tegak)</option>
+                </select>
+            </div>
+
+            <div class="auth-input-group" style="margin-bottom:12px; display:flex; flex-direction:row; justify-content:space-between; align-items:center;">
+                <label style="margin:0;">Tampilkan Grid Koordinat</label>
+                <label class="toggle">
+                    <input type="checkbox" id="print-grid-toggle" checked onchange="togglePrintGrid()" />
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:10px; margin-top:20px;">
+                <button class="aoi-btn-run" onclick="triggerPrint()" style="margin:0; box-shadow:none;">
+                    <i class="fa fa-print"></i> Cetak / Simpan PDF
+                </button>
+                <button class="aoi-btn-clear" onclick="closePrintLayout()" style="margin:0; min-height:40px;">
+                    <i class="fa fa-xmark"></i> Kembali ke Peta
+                </button>
+            </div>
+            
+            <div style="font-size:10px; color:var(--slate-500); margin-top:20px; line-height:1.5;">
+                ℹ️ <b>Tips Cetak:</b><br>
+                Di dialog cetak browser, atur:<br>
+                - <b>Destination:</b> Save as PDF<br>
+                - <b>Margins:</b> None / Minimum<br>
+                - <b>Background graphics:</b> Centang (Aktifkan)<br>
+                - <b>Paper size:</b> Sesuaikan pilihan (A4/A3)
+            </div>
+        </div>
+
+        <!-- Print Page Sheet Preview (Right) -->
+        <div id="print-page-viewport">
+            <div id="print-sheet" class="a4-landscape">
+                <!-- Map Area Box -->
+                <div id="print-map-wrapper">
+                    <div id="print-map-container">
+                        <!-- MapLibre Map is dynamically moved here -->
+                    </div>
+                    <!-- Coordinate Grid lines & tick marks -->
+                    <div id="print-grid-overlay"></div>
+                </div>
+
+                <!-- Marginalia (Informasi Tepi) -->
+                <div id="print-marginalia">
+                    <div class="pm-section pm-brand">
+                        <div class="pm-logo"><img src="Urban Logo (2).png" alt="Logo" style="width: 20px; height: 20px; object-fit: contain;" /></div>
+                        <div>
+                            <div class="pm-app-title">Urban3D</div>
+                            <div class="pm-app-sub">Analisis Perkotaan & Lingkungan</div>
+                        </div>
+                    </div>
+
+                    <div class="pm-section">
+                        <div class="pm-label">JUDUL PETA</div>
+                        <div class="pm-value" id="pm-map-title">PETA ANALISIS URBAN 3D</div>
+                    </div>
+
+                    <div class="pm-section">
+                        <div class="pm-label">KARTOGRAFER</div>
+                        <div class="pm-value" id="pm-map-author">Kartografer Utama</div>
+                    </div>
+
+                    <div class="pm-section" style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                        <div>
+                            <div class="pm-label">KOMPAS UTARA</div>
+                            <div class="pm-compass-wrap">
+                                <svg id="pm-compass-icon" viewBox="0 0 100 100" width="38" height="38" style="transform: rotate(0deg); transition: transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);">
+                                    <!-- Outer ring -->
+                                    <circle cx="50" cy="50" r="40" fill="none" stroke="#1e293b" stroke-width="1.2" />
+                                    <!-- Inner dashed ring -->
+                                    <circle cx="50" cy="50" r="35" fill="none" stroke="#64748b" stroke-width="0.6" stroke-dasharray="1.5 2" />
+                                    
+                                    <!-- Ticks -->
+                                    <line x1="25.25" y1="25.25" x2="28.79" y2="28.79" stroke="#64748b" stroke-width="0.75" />
+                                    <line x1="74.75" y1="25.25" x2="71.21" y2="28.79" stroke="#64748b" stroke-width="0.75" />
+                                    <line x1="25.25" y1="74.75" x2="28.79" y2="71.21" stroke="#64748b" stroke-width="0.75" />
+                                    <line x1="74.75" y1="74.75" x2="71.21" y2="71.21" stroke="#64748b" stroke-width="0.75" />
+                                    
+                                    <!-- Cardinal letters -->
+                                    <text x="50" y="14" font-size="10" font-weight="900" text-anchor="middle" font-family="Outfit, sans-serif" fill="#ef4444">U</text>
+                                    <text x="87" y="53" font-size="7" font-weight="700" text-anchor="middle" font-family="Outfit, sans-serif" fill="#64748b">T</text>
+                                    <text x="50" y="88" font-size="7" font-weight="700" text-anchor="middle" font-family="Outfit, sans-serif" fill="#64748b">S</text>
+                                    <text x="13" y="53" font-size="7" font-weight="700" text-anchor="middle" font-family="Outfit, sans-serif" fill="#64748b">B</text>
+                                    
+                                    <!-- Needle -->
+                                    <polygon points="50,18 45,50 50,47" fill="#ef4444" />
+                                    <polygon points="50,18 55,50 50,47" fill="#b91c1c" />
+                                    <polygon points="50,82 45,50 50,53" fill="#cbd5e1" />
+                                    <polygon points="50,82 55,50 50,53" fill="#94a3b8" />
+                                    
+                                    <!-- Pin -->
+                                    <circle cx="50" cy="50" r="4.5" fill="#1e293b" />
+                                    <circle cx="50" cy="50" r="1.5" fill="#ffffff" />
+                                </svg>
+                            </div>
+                        </div>
+                        <div style="flex:1;">
+                            <div class="pm-label">SKALA</div>
+                            <div class="pm-value" id="pm-map-scale">1:5.000</div>
+                            <div class="pm-scale-bar-wrapper">
+                                <div class="pm-scale-bar"></div>
+                                <div id="pm-scale-bar-labels" style="display:flex; justify-content:space-between; font-size:8px; color:#000000; margin-top:2px; font-family:Outfit, sans-serif; font-weight:600; width:80px;">
+                                    <span style="width:0; text-align:left; overflow:visible; white-space:nowrap;">0</span>
+                                    <span id="pm-scale-mid" style="width:0; text-align:center; overflow:visible; white-space:nowrap; display:flex; justify-content:center;">50m</span>
+                                    <span id="pm-scale-max" style="width:0; text-align:right; overflow:visible; white-space:nowrap; display:flex; justify-content:flex-end;">100m</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pm-section" style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
+                        <div class="pm-label">LEGENDA PETA</div>
+                        <div id="pm-legend-clone" style="flex:1; overflow-y:auto; padding-top:4px;">
+                            <!-- Legend cloned from main UI -->
+                        </div>
+                    </div>
+
+                    <div class="pm-section pm-footer" style="border-bottom:none; margin:0; padding:0;">
+                        <div class="pm-label">SUMBER DATA</div>
+                        <div class="pm-source-text">OpenStreetMap contributors, MapLibre GL, Urban3D Processing Engine.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================== PROFILE MODAL ===================== -->
+    <div id="profile-modal">
+        <div class="auth-card">
+            <div class="auth-card-title">
+                <span>👤 Ubah Profil</span>
+                <button class="auth-card-close" onclick="closeProfileModal()"><i class="fa fa-xmark"></i></button>
+            </div>
+            <div class="auth-input-group">
+                <label>Nama Panggilan Baru</label>
+                <div class="auth-input-wrapper">
+                    <i class="fa fa-user input-icon"></i>
+                    <input type="text" class="auth-input" id="nickname-input" placeholder="Nama panggilan..." />
+                </div>
+            </div>
+            <button class="auth-action-btn" onclick="submitChangeProfile()">Simpan Profil</button>
+        </div>
+    </div>
+
+    <!-- ===================== PASSWORD MODAL ===================== -->
+    <div id="password-modal">
+        <div class="auth-card">
+            <div class="auth-card-title">
+                <span>🔑 Ubah Kata Sandi</span>
+                <button class="auth-card-close" onclick="closePasswordModal()"><i class="fa fa-xmark"></i></button>
+            </div>
+            <div class="auth-input-group">
+                <label>Kata Sandi Baru</label>
+                <div class="auth-input-wrapper">
+                    <i class="fa fa-lock input-icon"></i>
+                    <input type="password" class="auth-input" id="new-password-input" placeholder="Kata sandi baru..." />
+                </div>
+            </div>
+            <div class="auth-input-group">
+                <label>Konfirmasi Kata Sandi</label>
+                <div class="auth-input-wrapper">
+                    <i class="fa fa-lock input-icon"></i>
+                    <input type="password" class="auth-input" id="confirm-password-input" placeholder="Konfirmasi..." />
+                </div>
+            </div>
+            <button class="auth-action-btn" onclick="submitChangePassword()">Simpan Kata Sandi</button>
+        </div>
+    </div>
+
+    <!-- ===================== LIBRARY MODAL ===================== -->
+    <div id="library-modal">
+        <div class="auth-card" style="width: 380px;">
+            <div class="auth-card-title">
+                <span id="library-modal-title">📁 Library & Arsip Project</span>
+                <button class="auth-card-close" onclick="closeLibraryModal()"><i class="fa fa-xmark"></i></button>
+            </div>
+            
+            <div class="library-tabs" style="display:flex; gap:6px; margin: 4px 0 10px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:10px;">
+                <button class="tab-btn active" id="tab-library" onclick="switchLibraryTab('library')">Active Library</button>
+                <button class="tab-btn" id="tab-archive" onclick="switchLibraryTab('archive')">Arsip (Archive)</button>
+            </div>
+            
+            <div id="library-save-section" style="margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 14px;">
+                <label style="font-size:10px; font-weight:700; color:var(--slate-400); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:6px;">Simpan Project Saat Ini</label>
+                <div class="save-project-form">
+                    <input type="text" class="save-project-input" id="new-project-name" placeholder="Nama project..." />
+                    <button class="save-project-btn" id="save-project-btn" onclick="saveCurrentProject()">Simpan</button>
+                </div>
+            </div>
+            
+            <div>
+                <label id="library-list-label" style="font-size:10px; font-weight:700; color:var(--slate-400); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:6px;">Daftar Project Aktif</label>
+                <div class="project-list" id="project-list-container" style="max-height: 220px; overflow-y: auto;">
+                    <!-- Dynamically populated -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================== NEW PROJECT SETUP MODAL ===================== -->
+    <div id="project-setup-modal">
+        <div class="auth-card" style="width: 380px;">
+            <div class="auth-card-title">
+                <span>📁 Setup Project Baru</span>
+                <button class="auth-card-close" onclick="closeProjectSetupModal()"><i class="fa fa-xmark"></i></button>
+            </div>
+            
+            <div class="auth-input-group" style="margin-bottom: 12px;">
+                <label>Nama Project</label>
+                <input type="text" class="auth-input" id="setup-project-name" placeholder="Masukkan nama project..." value="Project Baru Saya" />
+            </div>
+
+            <div class="auth-input-group" style="margin-bottom: 12px;">
+                <label>Deskripsi Project</label>
+                <textarea class="auth-input" id="setup-project-desc" placeholder="Tulis deskripsi singkat..." style="height: 60px; resize: none; font-family: inherit; font-size: 12px; padding: 8px 10px;"></textarea>
+            </div>
+
+            <div class="auth-input-group" style="margin-bottom: 16px;">
+                <label>Wilayah Fokus</label>
+                <select id="setup-project-location" style="width:100%; background:rgba(15, 23, 42, 0.8); border:1px solid var(--border-subtle); color:var(--white); padding:8px 10px; border-radius:var(--radius-sm); font-family:var(--font); font-size:12px; outline:none; cursor:pointer;">
+                    <option value="jakarta">DKI Jakarta</option>
+                    <option value="bandung">Kota Bandung</option>
+                    <option value="surabaya">Kota Surabaya</option>
+                    <option value="yogyakarta">D.I. Yogyakarta</option>
+                    <option value="medan">Kota Medan</option>
+                    <option value="makassar">Kota Makassar</option>
+                    <option value="kustom">Kustom (Peta Saat Ini)</option>
+                </select>
+            </div>
+
+            <button class="auth-action-btn" onclick="startNewProject()">Mulai Project & Buka Peta</button>
+        </div>
+    </div>
+
+    <!-- Main JS Application script linked -->
+    <script src="app.js" defer></script>
+</body>
+</html>
